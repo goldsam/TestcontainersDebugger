@@ -23,7 +23,7 @@ jobs:
         run: msbuild TestcontainersDebugger.sln /t:Restore
 
       - name: Build solution
-        run: msbuild TestcontainersDebugger.sln t:Build /p:Configuration=Release /
+        run: msbuild TestcontainersDebugger.sln /t:Build /p:Configuration=Release
 
       - name: Upload VSIX Artifact
         uses: actions/upload-artifact@v4
