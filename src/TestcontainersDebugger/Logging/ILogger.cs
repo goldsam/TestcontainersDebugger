@@ -1,7 +1,11 @@
-﻿namespace TestcontainersDebugger.Logging
+﻿using System;
+
+namespace TestcontainersDebugger.Logging
 {
     public interface ILogger
     {
-        void Log(string message);
+        void LogInfo(string message);
+
+        void LogError(string message);
     }
 }

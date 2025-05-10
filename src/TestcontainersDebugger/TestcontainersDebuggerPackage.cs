@@ -1,4 +1,5 @@
-﻿using Microsoft.VisualStudio;
+﻿using GrpcDotNetNamedPipes;
+using Microsoft.VisualStudio;
 using Microsoft.VisualStudio.ComponentModelHost;
 using Microsoft.VisualStudio.Shell;
 using Microsoft.VisualStudio.Shell.Interop;
@@ -6,7 +7,9 @@ using System;
 using System.ComponentModel.Composition;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
+using System.Security.Cryptography;
 using System.Threading;
+using TestcontainersDebugger.Contracts;
 using TestcontainersDebugger.Logging;
 using Task = System.Threading.Tasks.Task;
 
@@ -34,6 +37,8 @@ namespace TestcontainersDebugger
     [Guid(PackageGuidString)]
     public sealed class TestcontainersDebuggerPackage : AsyncPackage, IVsDebuggerEvents
     {
+        private const string PipeName = "TestcontainersDebugger";
+
         private const string ExtensionName = "Testcontainers Debugger";
 
         //IVsSolution vsSolution;
@@ -62,8 +67,22 @@ namespace TestcontainersDebugger
         /// </summary>
         public const string PackageGuidString = "d2f11835-bb82-4b47-aaf5-fea4f56003d0";
 
-        [Import]
-        internal ILogger _logger { get; set; }
+        private readonly TestcontainersDebuggingHandler _handler;
+        
+        //[Import]
+        //internal ILogger _logger { get; set; }
+
+        private readonly ILogger _logger;
+        private NamedPipeServer _server;
+
+        
+        public TestcontainersDebuggerPackage(
+            [Import] TestcontainersDebuggingHandler handler,
+            [Import] ILogger logger)
+        {
+            _handler = handler ?? throw new ArgumentNullException(nameof(handler)); 
+            _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+        }
 
         /// <summary>
         /// Initialization of the package; this method is called right after the package is sited, so this is the place
@@ -83,6 +102,7 @@ namespace TestcontainersDebugger
 
             // Report initial progress.
             var componentModel = (IComponentModel)await GetServiceAsync(typeof(SComponentModel));
+
             // Fail fast if MEF imports are misconfgured.
             componentModel.DefaultCompositionService.SatisfyImportsOnce(this);
 
@@ -92,6 +112,41 @@ namespace TestcontainersDebugger
             _debuggerService = (IVsDebugger)await GetServiceAsync(typeof(IVsDebugger));
 
             _debuggerService.AdviseDebuggerEvents(this, out _debugEventsCookie);
+
+            StartListening();
+        }
+
+        private void StartListening()
+        {
+            string pipeName = PipeName;
+            _server = new NamedPipeServer(pipeName);
+            try
+            {
+                _server.Error += (sender, args) =>
+                {
+                    _logger.LogError($"IPC Error: {args.Error}");
+                };
+
+                TestcontainersDebugging.BindService(_server.ServiceBinder, _handler);
+                _server.Start();
+
+                _logger.LogInfo($"Listening on named pipe '{pipeName}'.");
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError($"Error listening on named pipe '{pipeName}: {ex.Message}");
+                _server.Dispose();
+                _server = null;                
+            }
+        }
+
+        private void StopServer()
+        {
+            if (_server != null)
+            {
+                _server.Dispose();
+                _server = null;
+            }
         }
 
         public int OnModeChange(DBGMODE mode)
@@ -101,8 +156,8 @@ namespace TestcontainersDebugger
             //    _logger.Log("Debugger session started (Test debug launch).");
             //}
             
-            _logger.Log($"Debugger mode changed to: {mode}");
-       
+            _logger.LogInfo($"Debugger mode changed to: {mode}");
+
             return VSConstants.S_OK;
         }
 
@@ -134,6 +189,8 @@ namespace TestcontainersDebugger
                 //}
 
                 //Cleanup();
+
+                StopServer();
 
                 Trace.Flush();
             }
